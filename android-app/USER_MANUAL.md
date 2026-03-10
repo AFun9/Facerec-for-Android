@@ -239,5 +239,3 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - **卸载应用后，所有注册数据一并删除**
 
 ---
-
-*技术栈：人脸检测 SCRFD-500M · 特征 FaceNet · 推理 ONNX Runtime · 摄像头 CameraX*
