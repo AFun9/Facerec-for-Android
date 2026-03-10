@@ -1,0 +1,13 @@
+/.gradle
+/local.properties
+/.idea
+/build
+/app/build
+
+# ONNX 模型文件（体积较大的二进制资产，通过 GitHub Releases 分发）
+*.onnx
+
+# Android Studio 临时文件
+*.iml
+.DS_Store
+Thumbs.db
