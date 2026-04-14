@@ -2,7 +2,7 @@
 
 **版本**：1.0 · **平台**：Android 8.0（API 26）及以上
 
-本应用在设备端完成人脸注册与识别，无需联网，不上传任何图像或生物特征数据。
+本应用在设备端完成人脸注册、识别与情绪判断，无需联网，不上传任何图像或生物特征数据。
 
 ---
 
@@ -42,7 +42,7 @@
 
 ### 1.2 获取并放置模型
 
-应用依赖两个 ONNX 模型，**不随代码仓库提供**，需从 GitHub Release 下载后放入工程。
+应用依赖三个 ONNX 模型，**不随代码仓库提供**，需从 GitHub Release 下载后放入工程。
 
 **1. 下载模型**
 
@@ -52,16 +52,18 @@
 |--------|------|--------|
 | [facedet.onnx](https://github.com/AFun9/Facerec-for-Android/releases/download/v1.0.0/facedet.onnx) | 人脸检测（SCRFD-500M） | 2.5 MB |
 | [facenet.onnx](https://github.com/AFun9/Facerec-for-Android/releases/download/v1.0.0/facenet.onnx) | 人脸特征（FaceNet） | 23 MB |
+| `affecnet7.onnx` | 情绪识别（7 类表情） | 约 16 MB |
 
 **2. 放置到工程**
 
-将下载好的两个文件放入以下目录（文件名必须一致，全小写）：
+将下载好的三个文件放入以下目录（文件名必须一致，全小写）：
 
 ```
 android-app/
 └── app/src/main/assets/
     ├── facedet.onnx
     ├── facenet.onnx
+    ├── affecnet7.onnx
     └── README.md
 ```
 
@@ -106,7 +108,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - **全屏预览**：实时摄像头画面
 - **绿色框**：检测到的人脸框
-- **顶部文字**：单次/实时识别的结果（如 `✓ 张三 (0.78)`）
+- **顶部文字**：单次/实时识别的结果（如 `✓ 张三（0.78） | Happy 0.91`）
 - **底部三按钮**：注册、识别、设置
 
 ```
@@ -148,6 +150,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 - **✓ 张三（0.82）**：识别为该用户，括号内为相似度（0～1）
 - **未识别（0.31）**：无匹配用户，括号内为最高得分
+- 若情绪置信度达到阈值，会追加显示如 `| Happy 0.91`
+- 若情绪置信度低于阈值，会显示如 `| 待定(Angry 0.28 < 0.30)`
 
 识别约 0.5～2 秒，期间按钮会禁用。
 
@@ -155,7 +159,9 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 在 **设置** 中打开「实时识别」后，会按设定间隔对预览帧自动识别，结果在顶部实时更新。
 
-- 结果格式：`✓ 张三 (0.78)`；无匹配时浮层会消失
+- 结果格式：`✓ 张三 0.78 | Happy 0.91`
+- 无匹配时显示 `未识别 0.xx`
+- 无人脸时显示 `未找到人脸`
 - 会持续占用 CPU，可适当调大「帧处理间隔」减轻发热
 
 ### 2.5 删除用户
@@ -169,6 +175,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 | 实时识别 | 关 | 开启后持续对预览帧识别 |
 | 识别阈值 | 0.45 | 相似度低于此值视为未识别 |
 | 帧处理间隔 | 280 ms | 实时识别时每多少毫秒处理一帧 |
+| 情绪阈值 | 0.30 | 可展开后按 `Neutral / Happy / Sad / Surprise / Fear / Disgust / Angry` 单独调整 |
 
 ---
 
@@ -192,6 +199,12 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 **注册张数**：1 张快但鲁棒性差；3 张（推荐）综合效果更好。
 
+**情绪阈值**
+
+- 默认各类别为 `0.30`
+- 阈值越高，越不容易直接给出情绪结论
+- 如果你希望界面更保守，可以把容易误触发的类别单独调高
+
 ### 3.2 数据存储
 
 数据均在应用私有目录，其他应用不可见，**卸载即清除**。
@@ -200,7 +213,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 |------|------|
 | 人脸库（二进制） | `files/facereg/registry.bin` |
 | 人脸库（JSON） | `files/facereg/registry.json` |
-| 模型缓存 | `files/facedet.onnx`、`files/facenet.onnx` |
+| 模型缓存 | `files/facedet.onnx`、`files/facenet.onnx`、`files/affecnet7.onnx` |
 
 调试导出 JSON：`adb pull /data/data/com.facenet.mobile/files/facereg/registry.json ./`
 
@@ -209,7 +222,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 ## 四、常见问题
 
 **Q1：启动即崩溃**  
-确认 `app/src/main/assets/` 下存在 `facedet.onnx`、`facenet.onnx`，文件名全小写，文件完整（约 2.5 MB、23 MB）。再执行 `./gradlew clean assembleDebug` 后重装。
+确认 `app/src/main/assets/` 下存在 `facedet.onnx`、`facenet.onnx`、`affecnet7.onnx`，文件名全小写，文件完整。再执行 `./gradlew clean assembleDebug` 后重装。
 
 **Q2：人脸过小**  
 让人脸占屏幕约 1/5 以上，短边约 80 像素以上。
