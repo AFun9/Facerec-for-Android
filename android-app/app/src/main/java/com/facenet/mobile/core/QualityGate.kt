@@ -1,14 +1,21 @@
 package com.facenet.mobile.core
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
+import android.graphics.RectF
 
 class QualityGate(
     private val minDetScore: Float = 0.45f,
     private val minFaceAreaRatio: Float = 0.015f,
     private val minSharpness: Float = 3.0f
-) {
+) : AutoCloseable {
     /** 清晰度计算的像素缓冲，避免每次 check 分配 IntArray(25600) */
     private val sharpnessBuf = IntArray(160 * 160)
+    private val normalizedBitmap = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
+    private val normalizedCanvas = Canvas(normalizedBitmap)
+    private val cropSrcRect = Rect()
+    private val normalizedDstRect = RectF(0f, 0f, 160f, 160f)
 
     data class CheckResult(
         val pass: Boolean,
@@ -27,11 +34,9 @@ class QualityGate(
         }
 
         // 统一到固定分辨率再估计清晰度，减少不同拍照分辨率带来的偏差
-        val crop = BitmapUtils.cropFaceSquare(bitmap, det, 1.0f)
-        val normalized = BitmapUtils.resizeBitmap(crop, 160, 160)
-        val sharp = sharpness(normalized)
-        normalized.recycle()
-        crop.recycle()
+        BitmapUtils.fillFaceSquareRect(bitmap, det, 1.0f, cropSrcRect)
+        normalizedCanvas.drawBitmap(bitmap, cropSrcRect, normalizedDstRect, null)
+        val sharp = sharpness(normalizedBitmap)
 
         if (sharp < minSharpness) {
             // 高置信度且人脸占比足够时，放宽清晰度门限，避免误拒绝
@@ -73,5 +78,9 @@ class QualityGate(
         val g = (argb shr 8) and 0xFF
         val b = argb and 0xFF
         return 0.299f * r + 0.587f * g + 0.114f * b
+    }
+
+    override fun close() {
+        normalizedBitmap.recycle()
     }
 }

@@ -19,7 +19,9 @@ data class EmbeddingResult(
     val success: Boolean,
     val detScore: Float = 0f,
     val embedding: FloatArray = FloatArray(512),
-    val failReason: String = ""
+    val failReason: String = "",
+    val emotionLabel: String = "",
+    val emotionConfidence: Float = 0f
 )
 
 data class MatchResult(
@@ -27,4 +29,26 @@ data class MatchResult(
     val userId: String,
     val similarity: Float
     // detScore 已移除：FaceRegistryStore.identify 始终返回 0f，为死字段
+)
+
+@Suppress("ArrayInDataClass")
+data class EmotionResult(
+    val label: String,
+    val confidence: Float,
+    val probabilities: FloatArray = FloatArray(0)
+)
+
+data class FaceAnalysisResult(
+    val success: Boolean,
+    val detScore: Float = 0f,
+    val failReason: String = "",
+    val emotionLabel: String = "",
+    val emotionConfidence: Float = 0f
+)
+
+data class RealtimeFrameDetection(
+    val bitmap: android.graphics.Bitmap,
+    val detection: FaceDetection,
+    val sourceWidth: Int = bitmap.width,
+    val sourceHeight: Int = bitmap.height
 )

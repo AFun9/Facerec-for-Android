@@ -4,9 +4,12 @@ import android.app.Application
 import android.graphics.Bitmap
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.facenet.mobile.core.EmbeddingResult
+import com.facenet.mobile.core.FaceAnalysisResult
 import com.facenet.mobile.core.FacePipelineAndroid
 import com.facenet.mobile.core.FaceRegistryStore
 import com.facenet.mobile.core.MatchResult
+import com.facenet.mobile.core.RealtimeFrameDetection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,10 +18,34 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
+data class EmotionThresholds(
+    val neutral: Float = 0.30f,
+    val happy: Float = 0.30f,
+    val sad: Float = 0.30f,
+    val surprise: Float = 0.30f,
+    val fear: Float = 0.30f,
+    val disgust: Float = 0.30f,
+    val angry: Float = 0.30f
+) {
+    fun thresholdFor(label: String): Float {
+        return when (label) {
+            'N' + "eutral" -> neutral
+            'H' + "appy" -> happy
+            'S' + "ad" -> sad
+            'S' + "urprise" -> surprise
+            'F' + "ear" -> fear
+            'D' + "isgust" -> disgust
+            'A' + "ngry" -> angry
+            else -> 0.0f
+        }
+    }
+}
+
 data class AppSettings(
     val realtimeEnabled: Boolean = false,
     val identifyThreshold: Float = 0.45f,
-    val detectionIntervalMs: Int = 280
+    val detectionIntervalMs: Int = 280,
+    val emotionThresholds: EmotionThresholds = EmotionThresholds()
 )
 
 data class AppUiState(
@@ -40,12 +67,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val registry = FaceRegistryStore(app.applicationContext)
     private var currentRegisterUser: String = ""
     private var currentShots = 0
+    private var lastRealtimeResult: String = ""
+    private val realtimeEmbedding = FloatArray(512)
 
     /** 实时识别并发锁：CAS 保证只有一个协程在处理，丢帧时立即 recycle */
     private val realtimeLock = AtomicBoolean(false)
 
     init {
-        // loadBin 读取磁盘，移至 IO 线程避免阻塞主线程
         viewModelScope.launch(Dispatchers.IO) {
             registry.loadBin()
             withContext(Dispatchers.Main) { updateUsers() }
@@ -77,7 +105,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isBusy = true, status = "正在提取人脸特征...")
-            // try-finally 保证 bitmap 在任何情况下（包括异常/取消）都能被 recycle
             val emb = try {
                 withContext(Dispatchers.Default) {
                     pipeline.extractLargestFaceEmbedding(bitmap, enforceQuality = true)
@@ -99,7 +126,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             _uiState.value = _uiState.value.copy(
                 isBusy = false,
                 registerProgress = currentShots,
-                status = "采集成功 (${currentShots}/${_uiState.value.registerTarget})  分数=${"%.3f".format(emb.detScore)}"
+                status = "采集成功 (${currentShots}/${_uiState.value.registerTarget}) 分数=${"%.3f".format(emb.detScore)}"
             )
             if (currentShots >= _uiState.value.registerTarget) {
                 finishRegister()
@@ -148,43 +175,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 return@launch
             }
             val threshold = _uiState.value.settings.identifyThreshold
-            val m: MatchResult = registry.identify(emb.embedding, threshold = threshold)
-            val result = if (m.userId.isBlank()) {
-                "未识别（${"%.3f".format(m.similarity)}）"
-            } else {
-                "✓ ${m.userId}（${"%.3f".format(m.similarity)}）"
-            }
+            val result = buildVerifyLine(emb, threshold)
+            lastRealtimeResult = result
             _uiState.value = _uiState.value.copy(isBusy = false, verifyResult = result, status = "识别完成")
         }
     }
 
-    fun realtimeIdentify(bitmap: Bitmap) {
-        // CAS 保证只有一个协程在运行，当前忙则丢帧并立即回收 bitmap
-        if (!realtimeLock.compareAndSet(false, true)) {
-            bitmap.recycle()
+    fun realtimeIdentify(frame: RealtimeFrameDetection?) {
+        if (frame == null) {
+            if (lastRealtimeResult != "未找到人脸") {
+                lastRealtimeResult = "未找到人脸"
+                _uiState.value = _uiState.value.copy(verifyResult = lastRealtimeResult)
+            }
             return
         }
-        viewModelScope.launch {
-            try {
-                val emb = withContext(Dispatchers.Default) {
-                    pipeline.extractLargestFaceEmbedding(bitmap, enforceQuality = false)
-                }
-                bitmap.recycle()
-                if (!emb.success) return@launch
-                val threshold = _uiState.value.settings.identifyThreshold
-                val m: MatchResult = registry.identify(emb.embedding, threshold = threshold)
-                val result = if (m.userId.isBlank()) "" else "✓ ${m.userId} (${"%.2f".format(m.similarity)})"
+        if (!realtimeLock.compareAndSet(false, true)) {
+            return
+        }
+        try {
+            val analysis = pipeline.analyzeRealtimeFace(frame.bitmap, frame.detection, realtimeEmbedding)
+            val threshold = _uiState.value.settings.identifyThreshold
+            val result = buildRealtimeLine(analysis, threshold) ?: return
+            if (result != lastRealtimeResult) {
+                lastRealtimeResult = result
                 _uiState.value = _uiState.value.copy(verifyResult = result)
-            } finally {
-                realtimeLock.set(false)
             }
+        } finally {
+            realtimeLock.set(false)
         }
     }
 
     fun deleteUser(userId: String) {
         val existed = registry.deleteUser(userId)
         if (!existed) return
-        // 磁盘写入移至 IO 线程，避免阻塞主线程
         viewModelScope.launch(Dispatchers.IO) {
             registry.saveBin()
             registry.saveJson()
@@ -199,6 +222,42 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun updateUsers() {
         _uiState.value = _uiState.value.copy(users = registry.listRegisteredUsers())
+    }
+
+    private fun formatEmotionSuffix(emb: EmbeddingResult): String {
+        return formatEmotionSuffix(emb.emotionLabel, emb.emotionConfidence)
+    }
+
+    private fun formatEmotionSuffix(emotionLabel: String, emotionConfidence: Float): String {
+        if (emotionLabel.isBlank()) return ""
+        val thresholds = _uiState.value.settings.emotionThresholds
+        val threshold = thresholds.thresholdFor(emotionLabel)
+        if (emotionConfidence >= threshold) {
+            return " | $emotionLabel ${"%.3f".format(emotionConfidence)}"
+        }
+        return " | 待定($emotionLabel ${"%.3f".format(emotionConfidence)} < ${"%.2f".format(threshold)})"
+    }
+
+    private fun buildVerifyLine(emb: EmbeddingResult, threshold: Float): String {
+        val match: MatchResult = registry.identify(emb.embedding, threshold = threshold)
+        val identifyPart = if (match.userId.isBlank()) {
+            "未识别（${"%.3f".format(match.similarity)}）"
+        } else {
+            "✓ ${match.userId}（${"%.3f".format(match.similarity)}）"
+        }
+        return "$identifyPart${formatEmotionSuffix(emb)}"
+    }
+
+    private fun buildRealtimeLine(analysis: FaceAnalysisResult, threshold: Float): String? {
+        if (!analysis.success) return null
+        val match: MatchResult = registry.identify(realtimeEmbedding, threshold = threshold)
+        val identifyPart = if (match.userId.isBlank()) {
+            "未识别 ${"%.2f".format(match.similarity)}"
+        } else {
+            "✓ ${match.userId} ${"%.2f".format(match.similarity)}"
+        }
+        val emotionPart = formatEmotionSuffix(analysis.emotionLabel, analysis.emotionConfidence)
+        return "$identifyPart$emotionPart"
     }
 
     override fun onCleared() {

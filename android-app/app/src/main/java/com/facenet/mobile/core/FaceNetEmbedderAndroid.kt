@@ -7,6 +7,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Matrix
+import android.graphics.Rect
 import android.graphics.RectF
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -38,6 +39,7 @@ class FaceNetEmbedderAndroid(
     private val resizedBitmap = Bitmap.createBitmap(160, 160, Bitmap.Config.ARGB_8888)
     private val resizedCanvas = Canvas(resizedBitmap)
     private val resizeMatrix  = Matrix()
+    private val cropSrcRect = Rect()
     private val resizeSrcRect = RectF()
     private val resizeDstRect = RectF(0f, 0f, 160f, 160f)  // 固定目标，永不变
 
@@ -45,10 +47,10 @@ class FaceNetEmbedderAndroid(
     private val inv255 = 1f / 255f
 
     /** 推理输出 Set 缓存，避免每次 setOf(outputName) 分配 */
-    private lateinit var outputSet: Set<String>
+    private val outputSet: Set<String>
 
     /** 推理输入 Map 缓存，避免每次 Collections.singletonMap 分配 */
-    private lateinit var inputMap: Map<String, OnnxTensor>
+    private val inputMap: Map<String, OnnxTensor>
 
     init {
         val modelFile = materializeAsset(context, modelAssetName)
@@ -70,15 +72,38 @@ class FaceNetEmbedderAndroid(
         resizeSrcRect.set(0f, 0f, faceBitmap.width.toFloat(), faceBitmap.height.toFloat())
         resizeMatrix.setRectToRect(resizeSrcRect, resizeDstRect, Matrix.ScaleToFit.FILL)
         resizedCanvas.drawBitmap(faceBitmap, resizeMatrix, null)
-        preprocess(resizedBitmap, inputBuffer)
+        val emb = FloatArray(512)
+        fillEmbedding(resizedBitmap, emb)
+        return emb
+    }
+
+    fun embedFaceRegion(bitmap: Bitmap, det: FaceDetection, expandRatio: Float = 1.2f): FloatArray {
+        BitmapUtils.fillFaceSquareRect(bitmap, det, expandRatio, cropSrcRect)
+        resizedCanvas.drawBitmap(bitmap, cropSrcRect, resizeDstRect, null)
+        val emb = FloatArray(512)
+        fillEmbedding(resizedBitmap, emb)
+        return emb
+    }
+
+    fun fillFaceRegionEmbedding(
+        bitmap: Bitmap,
+        det: FaceDetection,
+        outEmbedding: FloatArray,
+        expandRatio: Float = 1.2f
+    ) {
+        BitmapUtils.fillFaceSquareRect(bitmap, det, expandRatio, cropSrcRect)
+        resizedCanvas.drawBitmap(bitmap, cropSrcRect, resizeDstRect, null)
+        fillEmbedding(resizedBitmap, outEmbedding)
+    }
+
+    private fun fillEmbedding(bitmap: Bitmap, outEmbedding: FloatArray) {
+        preprocess(bitmap, inputBuffer)
         session.run(inputMap, outputSet).use { result ->
             val tensor = result[0] as OnnxTensor
-            val emb = FloatArray(512)
             val fb = tensor.floatBuffer
             fb.rewind()
-            fb.get(emb)
-            l2Normalize(emb)
-            return emb
+            fb.get(outEmbedding)
+            l2Normalize(outEmbedding)
         }
     }
 

@@ -5,6 +5,8 @@ import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -89,7 +91,7 @@ fun AppScreen(vm: AppViewModel = viewModel()) {
             modifier = Modifier.fillMaxSize(),
             detectionIntervalMs = state.settings.detectionIntervalMs.toLong(),
             onFrameForIdentify = if (state.settings.realtimeEnabled) {
-                { bitmap -> vm.realtimeIdentify(bitmap) }
+                { frame -> vm.realtimeIdentify(frame) }
             } else null,
             onReady = { captureAction = it }
         )
@@ -274,9 +276,12 @@ private fun SettingsSheet(
     onDismiss: () -> Unit
 ) {
     val s = state.settings
+    var showEmotionThresholds by remember { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .verticalScroll(scrollState)
             .padding(horizontal = 24.dp)
             .padding(bottom = 36.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
@@ -335,6 +340,62 @@ private fun SettingsSheet(
             )
         }
 
+        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("情绪阈值", fontWeight = FontWeight.Medium, fontSize = 15.sp)
+            Text(
+                "点击下方区域展开后，再按类别分别调整阈值",
+                fontSize = 12.sp,
+                color = Color.Gray
+            )
+            Button(
+                onClick = { showEmotionThresholds = !showEmotionThresholds },
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE3F2FD))
+            ) {
+                val buttonLabel = if (showEmotionThresholds) "收起情绪阈值" else "展开情绪阈值"
+                Text(buttonLabel, color = Color(0xFF1565C0))
+            }
+            if (showEmotionThresholds) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    EmotionThresholdSlider(
+                        label = "Neutral",
+                        value = s.emotionThresholds.neutral,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(neutral = it))) }
+                    )
+                    EmotionThresholdSlider(
+                        label = "Happy",
+                        value = s.emotionThresholds.happy,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(happy = it))) }
+                    )
+                    EmotionThresholdSlider(
+                        label = "Sad",
+                        value = s.emotionThresholds.sad,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(sad = it))) }
+                    )
+                    EmotionThresholdSlider(
+                        label = "Surprise",
+                        value = s.emotionThresholds.surprise,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(surprise = it))) }
+                    )
+                    EmotionThresholdSlider(
+                        label = "Fear",
+                        value = s.emotionThresholds.fear,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(fear = it))) }
+                    )
+                    EmotionThresholdSlider(
+                        label = "Disgust",
+                        value = s.emotionThresholds.disgust,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(disgust = it))) }
+                    )
+                    EmotionThresholdSlider(
+                        label = "Angry",
+                        value = s.emotionThresholds.angry,
+                        onValueChange = { vm.updateSettings(s.copy(emotionThresholds = s.emotionThresholds.copy(angry = it))) }
+                    )
+                }
+            }
+        }
+
         Button(
             onClick = onDismiss,
             modifier = Modifier.fillMaxWidth(),
@@ -342,5 +403,28 @@ private fun SettingsSheet(
         ) { Text("关  闭") }
 
         Spacer(Modifier.height(4.dp))
+    }
+}
+
+@Composable
+private fun EmotionThresholdSlider(
+    label: String,
+    value: Float,
+    onValueChange: (Float) -> Unit
+) {
+    Column {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(label, fontWeight = FontWeight.Medium, fontSize = 14.sp)
+            Text("${"%.2f".format(value)}", fontSize = 14.sp, color = Color(0xFF1565C0))
+        }
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = 0.0f..1.0f,
+            steps = 19
+        )
     }
 }
